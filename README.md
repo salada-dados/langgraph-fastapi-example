@@ -7,7 +7,7 @@ A small, working base: a LangGraph agent with a **real tool**, served by FastAPI
 with a regular JSON endpoint and an **SSE streaming** endpoint.
 
 It is intentionally *not* a full production architecture — see
-[What this example intentionally leaves out](#what-this-example-does-not-do-yet).
+[What this example intentionally leaves out](#what-this-example-intentionally-leaves-out).
 
 ![Architecture: Client → FastAPI → LangGraph Agent → LLM and Tools, with SSE streaming back to the client](docs/architecture.svg)
 
