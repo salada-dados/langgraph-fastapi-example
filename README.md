@@ -18,7 +18,7 @@ Requires Python 3.11+ and an API key from **one** LLM provider (Anthropic or Ope
 ### 1. Install
 
 ```bash
-git clone https://github.com/saladadedados/langgraph-fastapi-example.git
+git clone https://github.com/salada-dados/langgraph-fastapi-example.git
 cd langgraph-fastapi-example
 
 python -m venv .venv
