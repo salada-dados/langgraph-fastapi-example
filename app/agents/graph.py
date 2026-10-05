@@ -1,59 +1,18 @@
 from functools import lru_cache
 
-import httpx
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import SystemMessage
-from langchain_core.tools import tool
 from langgraph.graph import START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.agents.state import AgentState
+from app.agents.tools import TOOLS
 from app.core.config import settings
 
 SYSTEM_PROMPT = (
     "You are a helpful assistant. "
     "Use the get_weather tool whenever the user asks about current weather."
 )
-
-
-# --- Tool -------------------------------------------------------------------
-
-@tool
-async def get_weather(city: str) -> str:
-    """Get the current weather for a city."""
-    try:
-        async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
-            geo = await client.get(
-                "https://geocoding-api.open-meteo.com/v1/search",
-                params={"name": city, "count": 1},
-            )
-            geo.raise_for_status()
-            results = geo.json().get("results")
-            if not results:
-                return f"Could not find a city called '{city}'."
-            place = results[0]
-
-            forecast = await client.get(
-                "https://api.open-meteo.com/v1/forecast",
-                params={
-                    "latitude": place["latitude"],
-                    "longitude": place["longitude"],
-                    "current": "temperature_2m,wind_speed_10m",
-                },
-            )
-            forecast.raise_for_status()
-            current = forecast.json()["current"]
-    except httpx.HTTPError as exc:
-        # Return the failure as text so the LLM can tell the user, instead of crashing the graph.
-        return f"Weather service unavailable: {exc}"
-
-    return (
-        f"{place['name']}, {place.get('country', '')}: "
-        f"{current['temperature_2m']}°C, wind {current['wind_speed_10m']} km/h."
-    )
-
-
-TOOLS = [get_weather]
 
 
 # --- LLM --------------------------------------------------------------------

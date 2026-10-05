@@ -1,4 +1,5 @@
 from dotenv import load_dotenv
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 # Export .env into os.environ so provider SDKs find their API keys
@@ -20,6 +21,11 @@ class Settings(BaseSettings):
 
     # Upper bound on user input: every character costs tokens.
     MAX_MESSAGE_LENGTH: int = 4000
+
+    # Max LangGraph steps per request, so a misbehaving LLM can't loop forever.
+    # Each agent → tools round trip takes 2 steps: 10 allows up to 4 tool rounds
+    # plus the final answer. Hitting the limit fails the request.
+    AGENT_RECURSION_LIMIT: int = Field(default=10, ge=1)
 
 
 settings = Settings()

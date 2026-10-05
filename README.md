@@ -1,12 +1,20 @@
 # LangGraph + FastAPI Example
 
 Companion code for the Salada de Dados article
-**"How to Build a Production-Ready LangGraph Agent with FastAPI"**.
+**"How to Build a LangGraph Agent with FastAPI and SSE Streaming"**.
 
 A small, working base: a LangGraph agent with a **real tool**, served by FastAPI,
-with a regular JSON endpoint and an **SSE streaming** endpoint.
+with a regular JSON endpoint and an **SSE streaming** endpoint. It shows how to:
 
-It is intentionally *not* a full production architecture — see
+1. define a real external tool (the free [Open-Meteo](https://open-meteo.com/) weather API);
+2. expose that tool to an LLM;
+3. build the agent loop explicitly with LangGraph;
+4. serve the graph through FastAPI;
+5. stream the agent's execution to the client with Server-Sent Events (SSE);
+6. add a few basic guardrails (input limits, a step limit, safe error messages);
+7. see what is still missing before production.
+
+This example is designed to teach the core architecture, not to be deployed as-is — see
 [What this example intentionally leaves out](#what-this-example-intentionally-leaves-out).
 
 ![Architecture: Client → FastAPI → LangGraph Agent → LLM and Tools, with SSE streaming back to the client](docs/architecture.svg)
@@ -115,14 +123,37 @@ curl.exe -N -X POST http://localhost:8000/chat/stream `
 
 ### What to expect from the stream
 
-Events arrive one by one: first `tool`, then many `token` events, then `done`.
+Events arrive one by one:
 
-| event   | data                         | when                          |
-|---------|------------------------------|-------------------------------|
-| `tool`  | `{"name": "get_weather"}`    | a tool finished running       |
-| `token` | `{"content": "..."}`         | a piece of the answer arrived |
-| `done`  | `{}`                         | the agent finished            |
-| `error` | `{"detail": "..."}`          | something failed mid-stream   |
+| event   | data                         | when                                   |
+|---------|------------------------------|----------------------------------------|
+| `token` | `{"content": "..."}`         | a piece of the LLM's text arrived      |
+| `tool`  | `{"name": "get_weather"}`    | a tool finished running                |
+| `done`  | `{}`                         | the agent finished (last event)        |
+| `error` | `{"detail": "..."}`          | something failed (last event)          |
+
+A stream contains zero or more `token` events, a `tool` event each time a tool call
+completes, more `token` events, and always ends with exactly one `done` **or** `error`.
+`token` and `tool` events can be interleaved: some models write a sentence
+("Let me check the weather…") *before* calling the tool, others call it straight away.
+Don't rely on a fixed order; read events until `done` or `error`.
+
+**Errors on `/chat` vs `/chat/stream`.** `POST /chat` returns an HTTP error status when the
+agent fails (`502`). `POST /chat/stream` can't do that once it has started: the `200` status and
+headers are already sent, so a failure arrives *in-band* as the final event, and the HTTP status
+stays `200`:
+
+```text
+event: error
+data: {"detail": "The agent failed to produce an answer."}
+```
+
+Streaming clients must check for the `error` event, not just the status code.
+
+**Consuming the stream from a browser.** The endpoint is a `POST` (the message goes in the JSON
+body), so the browser's native `EventSource` API, which only sends `GET`, can't call it. Use
+`fetch()` and read `response.body` as a stream, splitting on blank lines to get events,
+or any SSE client library that supports `POST`.
 
 ### Check the edge cases
 
@@ -130,21 +161,23 @@ Events arrive one by one: first `tool`, then many `token` events, then `done`.
 |-------------------------------------------------|------------------------------------------------------------------------------|
 | `{"message": ""}`                               | **422**: empty messages are rejected                                         |
 | A message longer than `MAX_MESSAGE_LENGTH`      | **422**: rejected before reaching the LLM                                    |
-| A wrong API key in `.env` (restart the server)  | **502** with a generic message; the full error shows only in the server logs |
+| A wrong API key in `.env` (restart the server)  | `/chat`: **502** with a generic message. `/chat/stream`: **200**, then an `error` event. The full error shows only in the server logs |
 | `{"message": "What is LangGraph?"}`             | An answer with no `tool` event: the agent only calls tools when needed       |
 
 ## How it works
 
 ```text
 app/
-├── agents/
-│   ├── graph.py     # the tool, the LLM and the LangGraph graph
-│   └── state.py     # graph state (the message list)
+├── main.py          # FastAPI app
 ├── api/
 │   └── chat.py      # POST /chat and POST /chat/stream
-├── core/
-│   └── config.py    # settings read from .env
-└── main.py          # FastAPI app
+├── agents/
+│   ├── state.py     # graph state (the message list)
+│   ├── tools.py     # get_weather: the Open-Meteo tool
+│   └── graph.py     # the LLM, tool binding and the LangGraph graph
+└── core/
+    └── config.py    # settings read from .env
+tests/               # pytest suite with a fake LLM and a mocked Open-Meteo
 ```
 
 The graph is a classic ReAct loop, written by hand so every step is visible:
@@ -154,9 +187,29 @@ The graph is a classic ReAct loop, written by hand so every step is visible:
 - **agent**: calls the LLM with the conversation and the available tools.
 - **tools**: runs whatever tool the LLM asked for and feeds the result back.
 - **get_weather**: a real tool that calls the free [Open-Meteo](https://open-meteo.com/) API (no key needed).
+  If Open-Meteo is unreachable, returns an error status or sends an unexpected response, the tool
+  gives the LLM a short generic message (details go to the server logs), so the agent can tell the
+  user instead of the whole request failing.
+
+Every request runs with an explicit LangGraph `recursion_limit` (`AGENT_RECURSION_LIMIT`, default 10).
+Each agent → tools round trip takes 2 steps, so the default allows up to 4 tool rounds plus the final
+answer. If a misbehaving model keeps calling tools, the run stops and the client gets the usual generic
+failure (`502` on `/chat`, an `error` event on `/chat/stream`).
 
 > The diagrams were drawn with [Excalidraw](https://excalidraw.com). To edit them, open the
 > `.excalidraw` files in [`docs/`](docs/) at excalidraw.com and export them again as SVG.
+
+## Running the tests
+
+The tests use a fake LLM and a mocked Open-Meteo API, so they need no API key and make no network calls:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+They cover input validation, the tool's success and failure paths, `/chat`, the `/chat/stream`
+event sequence, and the recursion limit stopping a runaway agent loop.
 
 ## Switching LLM providers
 
@@ -171,12 +224,19 @@ package and set the matching prefix and API key variable, e.g. `google_genai:` w
 
 ## What this example intentionally leaves out
 
-This repository focuses on the core integration pattern. **It runs, but don't deploy it as-is.**
+This repository focuses on the core integration pattern. It is designed to teach the
+architecture, **not to be deployed as-is**: it runs, but it has none of the production
+infrastructure listed below.
 
-It already includes two basic safeguards:
+It includes a few basic guardrails:
 
 - Dependency versions are pinned in `requirements.txt`, so a fresh install gets the tested versions.
-- User messages are capped at `MAX_MESSAGE_LENGTH` characters (default 4000), so a single request can't blow up your token bill.
+- User messages are capped at `MAX_MESSAGE_LENGTH` characters (default 4000), which bounds the input size of each request.
+- Each request is limited to `AGENT_RECURSION_LIMIT` graph steps (default 10), so a model stuck calling tools can't loop indefinitely.
+- Tool and agent errors reach the client (and the LLM) as generic messages; details stay in the server logs.
+
+These are guardrails, not cost controls: they don't cap the tokens the model generates, the total
+spend per client, or the number of requests.
 
 Beyond that, a real application needs to consider the points below. They are listed
 to help you plan, not as a checklist of features: the right solution for many of them
@@ -198,11 +258,11 @@ These protect your API key and your wallet. Address them first:
 | Missing                       | Why it matters in production                                                                    |
 |-------------------------------|-------------------------------------------------------------------------------------------------|
 | **Conversation memory**       | The graph has no checkpointer, so each request starts from zero. Real chats need a `thread_id` and LangGraph checkpointing. |
-| **Persistence (PostgreSQL)**  | In-memory state is lost on restart and isn't shared across workers. A durable checkpointer fixes both. |
-| **Docker / Compose**          | Reproducible builds and one-command environments for dev, CI and deploy.                       |
-| **Tests**                     | Agents change behaviour when prompts, models or tools change. Tests with fake LLMs catch regressions. |
+| **Persistence (PostgreSQL)**  | There is no database. Conversations and checkpoints need durable storage that survives restarts and is shared across workers. |
+| **Docker / deployment**       | No Dockerfile or deployment config. Reproducible builds and one-command environments for dev, CI and deploy. |
+| **Broader tests**             | The included tests are a small fake-LLM suite. Agents change behaviour when prompts, models or tools change; production needs wider coverage and evaluations against real models. |
 | **Structured error handling** | Here, errors become a generic 502 / `error` event. Production needs typed errors, retries and timeouts per dependency. |
-| **Logging & tracing**         | Without them you can't answer "why did the agent do that?". Structured logs plus LangSmith/OpenTelemetry. |
+| **Logging, tracing & metrics**| Only standard Python logging. Without structured logs, traces (LangSmith/OpenTelemetry) and metrics you can't answer "why did the agent do that?" or "what is it costing?". |
 | **Production configuration**  | Per-environment settings and running with multiple workers instead of `--reload`.              |
 | **Secrets management & CORS** | API keys in a secrets manager rather than a `.env` file; CORS rules for browser clients on other domains. |
 | **Full dependency lock**      | Only direct dependencies are pinned; transitive ones can still drift. Use a lock file (e.g. `uv lock`, `pip-tools`). |

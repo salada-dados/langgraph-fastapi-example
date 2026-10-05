@@ -23,10 +23,18 @@ class ChatResponse(BaseModel):
     answer: str
 
 
+# Applied to every graph run: past this many steps LangGraph raises GraphRecursionError,
+# which the handlers below turn into the same generic failure as any other error.
+GRAPH_CONFIG = {"recursion_limit": settings.AGENT_RECURSION_LIMIT}
+
+
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
     try:
-        result = await graph.ainvoke({"messages": [HumanMessage(request.message)]})
+        result = await graph.ainvoke(
+            {"messages": [HumanMessage(request.message)]},
+            config=GRAPH_CONFIG,
+        )
     except Exception:
         logger.exception("Agent failed")
         raise HTTPException(status_code=502, detail="The agent failed to produce an answer.")
@@ -42,6 +50,7 @@ async def stream_agent(message: str) -> AsyncIterator[str]:
     try:
         async for chunk, metadata in graph.astream(
             {"messages": [HumanMessage(message)]},
+            config=GRAPH_CONFIG,
             stream_mode="messages",
         ):
             if isinstance(chunk, ToolMessage):
