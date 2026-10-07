@@ -268,19 +268,20 @@ These protect your API key and your wallet. Address them first:
 | **Full dependency lock**      | Only direct dependencies are pinned; transitive ones can still drift. Use a lock file (e.g. `uv lock`, `pip-tools`). |
 | **Real health checks**        | `/health` says "ok" even if the LLM provider is down. Readiness checks should probe dependencies. |
 
-## Want to skip the production boilerplate?
+## Your agent works locally. What happens in production?
 
-I'm building the **Production LangGraph + FastAPI Starter** — a
-production-oriented version of this architecture with PostgreSQL
-persistence, checkpointing, Docker, tests, structured error handling,
-logging and production configuration.
+Getting an AI agent to work is only the beginning.
 
-It doesn't try to solve every point listed above. Authentication, rate limiting,
-tracing and secrets management depend heavily on where and how you deploy, so they
-stay your call.
+Production introduces a different set of problems: **state and persistence, failures and retries, idempotency, observability, streaming disconnects, testing, security, and deployment.**
 
-**Planned launch price: $29**
+At **Salada de Dados**, we're exploring these problems through working implementations, production patterns, checklists, and AI-assisted engineering workflows.
 
-[Get Early Access →](https://www.saladadedados.com/en/products/langgraph-fastapi-starter?utm_source=github&utm_medium=referral&utm_campaign=langgraph_starter)
+We're starting with a simple question:
+
+  **What's stopping you from putting your AI agent into production?**
+
+If you're building agents and facing these challenges, join Early Access and help shape what we build next.
+
+[Get Early Access →](https://www.saladadedados.com/en/products/ai-agent-production-kit?utm_source=github&utm_medium=referral&utm_campaign=ai-agent-production-kit)
 
 *The knowledge is free. The product saves you the work.*
